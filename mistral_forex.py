@@ -23,7 +23,8 @@ async def call_mcp_tool(name, args={}):
         # Use StdioServerParameters to start the server
         # command must be a string, not a list
         server_params = StdioServerParameters(
-            command="uv run forex_factory_mcp.py"
+            command="uv",
+            args=["run", "forex_factory_mcp.py"]
         )
         mcp_client = Client(server=server_params)
         await mcp_client.__aenter__()
@@ -36,7 +37,7 @@ async def close_mcp_client():
     """Close the MCP client connection"""
     global mcp_client
     if mcp_client is not None:
-        await mcp_client.__aexit__()
+        await mcp_client.__aexit__(None, None, None)
         mcp_client = None
 
 
