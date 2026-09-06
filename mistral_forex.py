@@ -11,6 +11,15 @@ load_dotenv()  # Load environment variables from .env file
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
 MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
 
+# Forex explanation prompt for beginners
+FOREX_EXPLANATION_PROMPT = """
+Explain this forex concept in 2-3 simple sentences using plain English. 
+Avoid jargon. Focus on:
+1. What it is
+2. Why it matters for currency prices
+3. Simple real-world analogy if possible
+"""
+
 # Global MCP client instance
 mcp_client = None
 
@@ -41,15 +50,15 @@ async def close_mcp_client():
         mcp_client = None
 
 
-def ask_mistral(prompt, model="mistral-tiny"):
-    """Ask Mistral to explain forex data"""
+def ask_mistral(content, model="mistral-tiny"):
+    """Ask Mistral to explain forex data using the consistent prompt"""
     headers = {
         "Authorization": f"Bearer {MISTRAL_API_KEY}",
         "Content-Type": "application/json"
     }
     data = {
         "model": model,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [{"role": "user", "content": f"{FOREX_EXPLANATION_PROMPT}\n\n{content}"}],
         "temperature": 0.7
     }
     response = requests.post(MISTRAL_URL, headers=headers, json=data)
@@ -69,13 +78,13 @@ async def main():
 
             elif user_input == "events":
                 events = await call_mcp_tool("get_today_events", {"currency": "USD"})
-                explanation = ask_mistral(f"Explain these forex economic events to a beginner trader:\n\n{events}")
+                explanation = ask_mistral(events)
                 print("\n" + explanation)
 
             elif user_input.startswith("news "):
                 query = user_input[5:]
                 news = await call_mcp_tool("search_forex_factory_news", {"query": query, "limit": 3})
-                explanation = ask_mistral(f"Summarize this forex news for a beginner:\n\n{news}")
+                explanation = ask_mistral(news)
                 print("\n" + explanation)
 
             elif user_input.startswith("article "):
@@ -88,14 +97,12 @@ async def main():
                 else:
                     content = f"Article data: {article}"
                 
-                explanation = ask_mistral(
-                    f"Summarize and explain this forex news article for a beginner:\n\n{content}"
-                )
+                explanation = ask_mistral(content)
                 print("\n" + explanation)
 
             else:
                 # Direct chat with Mistral about forex
-                response = ask_mistral(f"Forex trading question: {user_input}")
+                response = ask_mistral(user_input)
                 print("\n" + response)
     
     finally:
