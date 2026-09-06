@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
+import os
 import subprocess
 import requests
 import json
+from dotenv import load_dotenv
 
-MISTRAL_API_KEY = "your-api-key-here"  # Replace with your key
+load_dotenv()  # Load environment variables from .env file
+
+MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
 MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
 
 def call_mcp_tool(name, args={}):
