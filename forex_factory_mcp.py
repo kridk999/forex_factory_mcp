@@ -120,7 +120,7 @@ async def get_news_article(news_id: str) -> Dict:
         Dictionary with title, url, full content, date, and source.
     """
     # Handle both full slug and just ID
-    if '-' not in news_id:
+    if '-' in news_id:
         url = f"https://www.forexfactory.com/news/{news_id}"
     else:
         url = f"https://www.forexfactory.com/news/{news_id}"
@@ -134,25 +134,40 @@ async def get_news_article(news_id: str) -> Dict:
         response.raise_for_status()
         soup = BeautifulSoup(response.text, "html.parser")
     
-    article = soup.find("article") or soup
-    title_elem = article.select_one("h1") or article.select_one(".news-article__title")
-    title = title_elem.get_text(strip=True) if title_elem else "N/A"
+    # Forex Factory article structure
+    title = soup.select_one("h1") or soup.select_one(".news-title")
+    title = title.get_text(strip=True) if title else "No title found"
     
-    # Try to get the main content
-    content_elem = (article.select_one(".news-article__content") or
-                   article.select_one(".article-content") or
-                   article)
+    # Try multiple selectors for content
+    content_selectors = [
+        ".news-content",
+        ".article-body",
+        ".post-content",
+        "article",
+        ".content",
+        "div[itemprop='articleBody']",
+        ".news-article__content",
+    ]
     
-    content_text = content_elem.get_text(strip=True, separator="\n") if hasattr(content_elem, 'get_text') else str(content_elem)
+    content = ""
+    for selector in content_selectors:
+        elem = soup.select_one(selector)
+        if elem:
+            content = elem.get_text(strip=True, separator="\n")
+            break
     
-    # Get date
-    date_elem = article.select_one(".news-article__date") or article.select_one("time")
-    date = date_elem.get_text(strip=True) if date_elem else "N/A"
+    if not content:
+        # Fallback: get all paragraphs
+        paragraphs = soup.find_all('p')
+        content = "\n".join(p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True))
+    
+    date_elem = soup.select_one("time") or soup.select_one(".date") or soup.select_one(".news-article__date")
+    date = date_elem.get_text(strip=True) if date_elem else "No date"
     
     return {
         "title": title,
         "url": url,
-        "content": content_text,
+        "content": content if content else "No content found",
         "date": date,
         "source": "Forex Factory"
     }
