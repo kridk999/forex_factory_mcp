@@ -124,4 +124,8 @@ async def latest_news_json() -> str:
 
 # Run the server
 if __name__ == "__main__":
+    print("Forex Factory MCP server starting...")
+    print("Available tools: get_today_events, search_forex_factory_news")
+    print("Available resources: calendar//today.json, news//latest.json")
+    print("Waiting for MCP client connections...")
     server.run()
