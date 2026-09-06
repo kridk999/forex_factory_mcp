@@ -17,10 +17,21 @@ def call_mcp_tool(name, args={}):
         cmd.extend(["--arg", k, str(v)])
     result = subprocess.run(cmd, capture_output=True, text=True)
     output = result.stdout.strip()
-    try:
-        return json.loads(output)
-    except json.JSONDecodeError:
-        return output
+    
+    # Try to find and parse JSON in the output
+    # MCP CLI might wrap JSON in other text
+    if "{" in output and "}" in output:
+        # Try to extract JSON from output
+        start = output.rfind("{")
+        end = output.rfind("}") + 1
+        json_str = output[start:end]
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError:
+            pass
+    
+    # If no JSON found, return raw output
+    return output
 
 def ask_mistral(prompt, model="mistral-tiny"):
     """Ask Mistral to explain forex data"""
