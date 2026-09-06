@@ -71,9 +71,19 @@ def main():
         elif user_input.startswith("article "):
             article_id = user_input[8:]  # Extract the ID/slug
             article = call_mcp_tool("get_news_article", {"news_id": article_id})
+            
+            # Debug: print what we got
+            print(f"DEBUG: article type = {type(article)}")
+            print(f"DEBUG: article = {article[:200] if isinstance(article, str) else article}")
+            
+            # Handle both dict and string responses
+            if isinstance(article, dict):
+                content = f"Title: {article.get('title', 'N/A')}\n\n{article.get('content', 'N/A')}"
+            else:
+                content = f"Article data: {article}"
+            
             explanation = ask_mistral(
-                f"Summarize and explain this forex news article for a beginner:\n\n"
-                f"Title: {article['title']}\n\n{article['content']}"
+                f"Summarize and explain this forex news article for a beginner:\n\n{content}"
             )
             print("\n" + explanation)
 
