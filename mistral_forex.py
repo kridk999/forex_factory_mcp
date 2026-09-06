@@ -21,8 +21,9 @@ async def call_mcp_tool(name, args={}):
     
     if mcp_client is None:
         # Use StdioServerParameters to start the server
+        # command must be a string, not a list
         server_params = StdioServerParameters(
-            command=["uv", "run", "forex_factory_mcp.py"]
+            command="uv run forex_factory_mcp.py"
         )
         mcp_client = Client(server=server_params)
         await mcp_client.__aenter__()
