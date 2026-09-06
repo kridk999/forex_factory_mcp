@@ -1,4 +1,4 @@
-from mcp.server import Server
+from mcp.server import MCPServer
 import httpx
 from bs4 import BeautifulSoup
 from datetime import datetime
@@ -6,7 +6,7 @@ from typing import List, Dict, Optional
 import os
 
 # Initialize MCP server
-server = Server("forex-factory-mcp")
+server = MCPServer("forex-factory-mcp")
 
 # --- Tool: Get today's economic calendar events ---
 @server.tool()
