@@ -4,7 +4,7 @@ import asyncio
 import requests
 import json
 from dotenv import load_dotenv
-from mcp.client import Client
+from mcp import Client, StdioServerParameters
 
 load_dotenv()  # Load environment variables from .env file
 
@@ -20,7 +20,11 @@ async def call_mcp_tool(name, args={}):
     global mcp_client
     
     if mcp_client is None:
-        mcp_client = Client(command=["uv", "run", "forex_factory_mcp.py"])
+        # Use StdioServerParameters to start the server
+        server_params = StdioServerParameters(
+            command=["uv", "run", "forex_factory_mcp.py"]
+        )
+        mcp_client = Client(server=server_params)
         await mcp_client.__aenter__()
     
     result = await mcp_client.call_tool(name, args)
