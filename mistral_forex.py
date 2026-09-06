@@ -16,7 +16,11 @@ def call_mcp_tool(name, args={}):
     for k, v in args.items():
         cmd.extend(["--arg", k, str(v)])
     result = subprocess.run(cmd, capture_output=True, text=True)
-    return result.stdout.strip()
+    output = result.stdout.strip()
+    try:
+        return json.loads(output)
+    except json.JSONDecodeError:
+        return output
 
 def ask_mistral(prompt, model="mistral-tiny"):
     """Ask Mistral to explain forex data"""
