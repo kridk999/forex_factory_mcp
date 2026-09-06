@@ -34,7 +34,7 @@ def ask_mistral(prompt, model="mistral-tiny"):
 
 def main():
     print("\n=== Mistral + Forex Factory Terminal ===")
-    print("Type 'events' for today's events, 'news [query]' to search, 'exit' to quit")
+    print("Type 'events' for today's events, 'news [query]' to search, 'article [id]' for specific article, 'exit' to quit")
 
     while True:
         user_input = input("\n> ").strip().lower()
@@ -51,6 +51,15 @@ def main():
             query = user_input[5:]
             news = call_mcp_tool("search_forex_factory_news", {"query": query, "limit": 3})
             explanation = ask_mistral(f"Summarize this forex news for a beginner:\n\n{news}")
+            print("\n" + explanation)
+
+        elif user_input.startswith("article "):
+            article_id = user_input[8:]  # Extract the ID/slug
+            article = call_mcp_tool("get_news_article", {"news_id": article_id})
+            explanation = ask_mistral(
+                f"Summarize and explain this forex news article for a beginner:\n\n"
+                f"Title: {article['title']}\n\n{article['content']}"
+            )
             print("\n" + explanation)
 
         else:
