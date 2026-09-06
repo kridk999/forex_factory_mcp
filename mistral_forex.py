@@ -67,7 +67,7 @@ def ask_mistral(content, model="mistral-tiny"):
 
 async def main():
     print("\n=== Mistral + Forex Factory Terminal ===")
-    print("Type 'events' for today's events, 'news [query]' to search, 'article [id]' for specific article, 'exit' to quit")
+    print("Type 'events [day]' for events (e.g., 'events today', 'events monday'), 'news [query]' to search, 'article [id]' for specific article, 'exit' to quit")
 
     try:
         while True:
@@ -76,8 +76,15 @@ async def main():
             if user_input == "exit":
                 break
 
+            elif user_input.startswith("events "):
+                day = user_input[7:].strip() or "today"
+                events = await call_mcp_tool("get_day_events", {"day": day, "currency": "USD"})
+                explanation = ask_mistral(events)
+                print("\n" + explanation)
+            
             elif user_input == "events":
-                events = await call_mcp_tool("get_today_events", {"currency": "USD"})
+                # Default to today
+                events = await call_mcp_tool("get_day_events", {"day": "today", "currency": "USD"})
                 explanation = ask_mistral(events)
                 print("\n" + explanation)
 
