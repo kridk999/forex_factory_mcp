@@ -106,6 +106,57 @@ async def search_forex_factory_news(query: str, limit: int = 5) -> List[Dict]:
     
     return news_items
 
+# --- Tool: Get specific news article by ID/slug ---
+@server.tool()
+async def get_news_article(news_id: str) -> Dict:
+    """
+    Fetch a specific Forex Factory news article by its ID or URL slug.
+    
+    Args:
+        news_id: The news ID or URL slug (e.g., '1416551-gold-prices-coin-flip-lasted-a-day')
+                 Can also be just the ID number (e.g., '1416551')
+    
+    Returns:
+        Dictionary with title, url, full content, date, and source.
+    """
+    # Handle both full slug and just ID
+    if '-' not in news_id:
+        url = f"https://www.forexfactory.com/news/{news_id}"
+    else:
+        url = f"https://www.forexfactory.com/news/{news_id}"
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, headers=headers)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, "html.parser")
+    
+    article = soup.find("article") or soup
+    title_elem = article.select_one("h1") or article.select_one(".news-article__title")
+    title = title_elem.get_text(strip=True) if title_elem else "N/A"
+    
+    # Try to get the main content
+    content_elem = (article.select_one(".news-article__content") or
+                   article.select_one(".article-content") or
+                   article)
+    
+    content_text = content_elem.get_text(strip=True, separator="\n") if hasattr(content_elem, 'get_text') else str(content_elem)
+    
+    # Get date
+    date_elem = article.select_one(".news-article__date") or article.select_one("time")
+    date = date_elem.get_text(strip=True) if date_elem else "N/A"
+    
+    return {
+        "title": title,
+        "url": url,
+        "content": content_text,
+        "date": date,
+        "source": "Forex Factory"
+    }
+
 # --- Resource: Latest economic calendar (JSON) ---
 @server.resource("calendar//today.json")
 async def today_calendar_json() -> str:
@@ -125,7 +176,7 @@ async def latest_news_json() -> str:
 # Run the server
 if __name__ == "__main__":
     print("Forex Factory MCP server starting...")
-    print("Available tools: get_today_events, search_forex_factory_news")
+    print("Available tools: get_today_events, search_forex_factory_news, get_news_article")
     print("Available resources: calendar//today.json, news//latest.json")
     print("Waiting for MCP client connections...")
     server.run()
