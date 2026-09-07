@@ -20,6 +20,15 @@ Avoid jargon. Focus on:
 3. Simple real-world analogy if possible
 """
 
+# Forex event explanation prompt (for individual events)
+FOREX_EVENT_PROMPT = """
+Explain this economic event for a forex beginner. Be concise (2-3 sentences max).
+Format:
+- What this event measures
+- How it typically affects currency prices
+- Simple real-world comparison
+"""
+
 # Global MCP client instance
 mcp_client = None
 
@@ -30,7 +39,6 @@ async def call_mcp_tool(name, args={}):
     
     if mcp_client is None:
         # Use StdioServerParameters to start the server
-        # command must be a string, not a list
         server_params = StdioServerParameters(
             command="uv",
             args=["run", "forex_factory_mcp.py"]
@@ -50,15 +58,19 @@ async def close_mcp_client():
         mcp_client = None
 
 
-def ask_mistral(content, model="mistral-tiny"):
-    """Ask Mistral to explain forex data using the consistent prompt"""
+def ask_mistral(content, model="mistral-tiny", is_event=False):
+    """Ask Mistral to explain forex data using the appropriate prompt"""
     headers = {
         "Authorization": f"Bearer {MISTRAL_API_KEY}",
         "Content-Type": "application/json"
     }
+    
+    # Use event-specific prompt for individual events
+    prompt = FOREX_EVENT_PROMPT if is_event else FOREX_EXPLANATION_PROMPT
+    
     data = {
         "model": model,
-        "messages": [{"role": "user", "content": f"{FOREX_EXPLANATION_PROMPT}\n\n{content}"}],
+        "messages": [{"role": "user", "content": f"{prompt}\n\n{content}"}],
         "temperature": 0.7
     }
     response = requests.post(MISTRAL_URL, headers=headers, json=data)
@@ -79,14 +91,58 @@ async def main():
             elif user_input.startswith("events "):
                 day = user_input[7:].strip() or "today"
                 events = await call_mcp_tool("get_day_events", {"day": day, "currency": "USD"})
-                explanation = ask_mistral(events)
-                print("\n" + explanation)
+                
+                # Print each event with its details
+                if isinstance(events, list):
+                    for event in events:
+                        title = event.get('event', 'N/A')
+                        forecast = event.get('forecast', 'N/A')
+                        actual = event.get('actual', 'N/A')
+                        impact = event.get('impact', 'N/A')
+                        time = event.get('time', 'N/A')
+                        currency = event.get('currency', 'N/A')
+                        
+                        print(f"\n--- {title} ---")
+                        print(f"Currency: {currency} | Time: {time} | Impact: {impact}")
+                        if forecast != 'N/A':
+                            print(f"Forecast: {forecast}")
+                        if actual != 'N/A':
+                            print(f"Actual: {actual}")
+                        
+                        # Get explanation for this specific event
+                        event_content = f"Event: {title}\nCurrency: {currency}\nForecast: {forecast}\nActual: {actual}\nImpact: {impact}"
+                        explanation = ask_mistral(event_content, is_event=True)
+                        print(f"Explanation: {explanation}")
+                else:
+                    print("\nNo events found for that day.")
             
             elif user_input == "events":
                 # Default to today
                 events = await call_mcp_tool("get_day_events", {"day": "today", "currency": "USD"})
-                explanation = ask_mistral(events)
-                print("\n" + explanation)
+                
+                # Print each event with its details
+                if isinstance(events, list):
+                    for event in events:
+                        title = event.get('event', 'N/A')
+                        forecast = event.get('forecast', 'N/A')
+                        actual = event.get('actual', 'N/A')
+                        impact = event.get('impact', 'N/A')
+                        time = event.get('time', 'N/A')
+                        currency = event.get('currency', 'N/A')
+                        
+                        print(f"\n--- {title} ---")
+                        print(f"Currency: {currency} | Time: {time} | Impact: {impact}")
+                        if forecast != 'N/A':
+                            print(f"Forecast: {forecast}")
+                        if actual != 'N/A':
+                            print(f"Actual: {actual}")
+                        
+                        # Get explanation for this specific event
+                        event_content = f"Event: {title}\nCurrency: {currency}\nForecast: {forecast}\nActual: {actual}\nImpact: {impact}"
+                        explanation = ask_mistral(event_content, is_event=True)
+                        print(f"Explanation: {explanation}")
+                else:
+                    print("\nNo events found for that day.")
 
             elif user_input.startswith("news "):
                 query = user_input[5:]
