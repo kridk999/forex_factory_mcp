@@ -48,47 +48,74 @@ def format_date_for_url(target_date: datetime) -> str:
     return f"{month}{target_date.day}.{target_date.year}"
 
 
+# In-memory calendar cache
+CALENDAR_CACHE = {"data": None, "timestamp": None}
+CACHE_DURATION_HOURS = 1
+
 async def fetch_calendar_events(target_date: datetime) -> List[Dict]:
-    """Fetch and parse events from Forex Factory's official JSON API."""
-    url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    }
+    """Fetch and parse events from Forex Factory's official JSON API with caching."""
+    global CALENDAR_CACHE
     
-    try:
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            response = await client.get(url, headers=headers)
-            response.raise_for_status()
-            data = response.json()
-    except Exception as e:
+    now = datetime.now()
+    use_cache = (
+        CALENDAR_CACHE["data"] is not None
+        and CALENDAR_CACHE["timestamp"] is not None
+        and (now - CALENDAR_CACHE["timestamp"]) < timedelta(hours=CACHE_DURATION_HOURS)
+    )
+
+    data = None
+    if use_cache:
+        data = CALENDAR_CACHE["data"]
+    else:
+        # Endpoints to try (primary and CDN mirror)
+        endpoints = [
+            "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
+            "https://cdn-nfs.faireconomy.media/ff_calendar_thisweek.json"
+        ]
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+
+        for url in endpoints:
+            try:
+                async with httpx.AsyncClient(follow_redirects=True) as client:
+                    response = await client.get(url, headers=headers, timeout=10.0)
+                    response.raise_for_status()
+                    data = response.json()
+                    # Store in cache
+                    CALENDAR_CACHE["data"] = data
+                    CALENDAR_CACHE["timestamp"] = now
+                    break
+            except Exception:
+                continue
+
+    # If both endpoints fail and cache is empty, return an informative error
+    if data is None:
         return [{
             "time": "N/A",
             "currency": "USD",
             "impact": "High",
-            "event": f"API Error: {str(e)}",
+            "event": "API Rate Limit (HTTP 429) hit. Please wait a few minutes before retrying.",
             "actual": "N/A",
             "forecast": "N/A",
             "previous": "N/A",
-            "source_url": url
+            "source_url": "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
         }]
-    
+
     events = []
     target_date_str = target_date.strftime("%Y-%m-%d")
-    
+
     for item in data:
-        # The JSON date format is "YYYY-MM-DDTHH:MM:SS-TZ:00"
         item_date_str = item.get("date", "")[:10]
-        
-        # Filter for the requested day directly during the fetch
         if item_date_str != target_date_str:
             continue
-            
+
         time_str = "All Day"
         if "T" in item.get("date", ""):
             time_part = item["date"].split("T")[1][:5]
             if time_part != "00:00":
                 time_str = time_part
-                
+
         events.append({
             "time": time_str,
             "currency": item.get("country", "N/A"),
@@ -97,9 +124,9 @@ async def fetch_calendar_events(target_date: datetime) -> List[Dict]:
             "actual": item.get("actual", "") or "N/A",
             "forecast": item.get("forecast", "") or "N/A",
             "previous": item.get("previous", "") or "N/A",
-            "source_url": url
+            "source_url": "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
         })
-    
+
     return events
 
 
