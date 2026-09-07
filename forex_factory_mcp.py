@@ -1,3 +1,5 @@
+import json
+
 from mcp.server import MCPServer
 import httpx
 from bs4 import BeautifulSoup
@@ -41,41 +43,60 @@ def get_date_from_string(day_name: str) -> datetime:
 
 def format_date_for_url(target_date: datetime) -> str:
     """Format date for Forex Factory calendar URL."""
-    return target_date.strftime("%Y-%m-%d")
+    # Constructs format like 'sep7.2026'
+    month = target_date.strftime("%b").lower()
+    return f"{month}{target_date.day}.{target_date.year}"
 
 
-async def fetch_calendar_events(url: str) -> List[Dict]:
-    """Fetch and parse events from Forex Factory calendar URL."""
+async def fetch_calendar_events(target_date: datetime) -> List[Dict]:
+    """Fetch and parse events from Forex Factory's official JSON API."""
+    url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
     
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url, headers=headers)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, "html.parser")
+    try:
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+    except Exception as e:
+        return [{
+            "time": "N/A",
+            "currency": "USD",
+            "impact": "High",
+            "event": f"API Error: {str(e)}",
+            "actual": "N/A",
+            "forecast": "N/A",
+            "previous": "N/A",
+            "source_url": url
+        }]
     
     events = []
-    rows = soup.select(".calendar__row.calendar__row--grey")
+    target_date_str = target_date.strftime("%Y-%m-%d")
     
-    for row in rows:
-        time = row.select_one(".calendar__time").get_text(strip=True) if row.select_one(".calendar__time") else "N/A"
-        currency = row.select_one(".calendar__currency").get_text(strip=True) if row.select_one(".calendar__currency") else "N/A"
-        impact_elem = row.select_one(".calendar__impact span")
-        impact = impact_elem["title"] if impact_elem else "N/A"
-        event = row.select_one(".calendar__event").get_text(strip=True) if row.select_one(".calendar__event") else "N/A"
-        actual = row.select_one(".calendar__actual").get_text(strip=True) if row.select_one(".calendar__actual") else "N/A"
-        forecast = row.select_one(".calendar__forecast").get_text(strip=True) if row.select_one(".calendar__forecast") else "N/A"
-        previous = row.select_one(".calendar__previous").get_text(strip=True) if row.select_one(".calendar__previous") else "N/A"
+    for item in data:
+        # The JSON date format is "YYYY-MM-DDTHH:MM:SS-TZ:00"
+        item_date_str = item.get("date", "")[:10]
         
+        # Filter for the requested day directly during the fetch
+        if item_date_str != target_date_str:
+            continue
+            
+        time_str = "All Day"
+        if "T" in item.get("date", ""):
+            time_part = item["date"].split("T")[1][:5]
+            if time_part != "00:00":
+                time_str = time_part
+                
         events.append({
-            "time": time,
-            "currency": currency,
-            "impact": impact,
-            "event": event,
-            "actual": actual,
-            "forecast": forecast,
-            "previous": previous,
+            "time": time_str,
+            "currency": item.get("country", "N/A"),
+            "impact": item.get("impact", "N/A"),
+            "event": item.get("title", "N/A"),
+            "actual": item.get("actual", "") or "N/A",
+            "forecast": item.get("forecast", "") or "N/A",
+            "previous": item.get("previous", "") or "N/A",
             "source_url": url
         })
     
@@ -84,7 +105,7 @@ async def fetch_calendar_events(url: str) -> List[Dict]:
 
 # --- Tool: Get economic calendar events for a specific day ---
 @server.tool()
-async def get_day_events(day: str = "today", currency: Optional[str] = None, impact: Optional[str] = None) -> List[Dict]:
+async def get_day_events(day: str = "today", currency: Optional[str] = None, impact: Optional[str] = None) -> str:
     """
     Fetch economic calendar events for a specific day from Forex Factory.
     
@@ -92,7 +113,7 @@ async def get_day_events(day: str = "today", currency: Optional[str] = None, imp
         day: Day name ('today', 'tomorrow', 'monday', 'tuesday', etc.) or date in YYYY-MM-DD format.
         currency: Filter by currency (e.g., 'USD', 'EUR', 'GBP'). If None, returns all.
         impact: Filter by impact level ('high', 'medium', 'low'). If None, returns all.
-    
+        
     Returns:
         List of event dictionaries with keys: time, currency, impact, event, actual, forecast, previous.
     """
@@ -112,13 +133,9 @@ async def get_day_events(day: str = "today", currency: Optional[str] = None, imp
             except:
                 target_date = datetime.now()
     
-    # Build the URL with the target date
-    formatted_date = format_date_for_url(target_date)
-    url = f"https://www.forexfactory.com/calendar?day={formatted_date}"
+    # Call the JSON fetcher using the datetime object
+    events = await fetch_calendar_events(target_date)
     
-    events = await fetch_calendar_events(url)
-    
-    # Apply filters
     filtered_events = []
     for event in events:
         if currency and event.get("currency", "").upper() != currency.upper():
@@ -127,7 +144,8 @@ async def get_day_events(day: str = "today", currency: Optional[str] = None, imp
             continue
         filtered_events.append(event)
     
-    return filtered_events
+    # Explicitly serialize the list to a valid JSON string
+    return json.dumps(filtered_events)
 
 # --- Tool: Search Forex Factory news ---
 @server.tool()
@@ -170,7 +188,7 @@ async def search_forex_factory_news(query: str, limit: int = 5) -> List[Dict]:
             "date": date
         })
     
-    return news_items
+    return json.dumps(news_items)
 
 # --- Tool: Get specific news article by ID/slug ---
 @server.tool()
@@ -230,20 +248,21 @@ async def get_news_article(news_id: str) -> Dict:
     date_elem = soup.select_one("time") or soup.select_one(".date") or soup.select_one(".news-article__date")
     date = date_elem.get_text(strip=True) if date_elem else "No date"
     
-    return {
+    return json.dumps({
         "title": title,
         "url": url,
         "content": content if content else "No content found",
         "date": date,
         "source": "Forex Factory"
-    }
+    })
 
 # --- Resource: Latest economic calendar (JSON) ---
 @server.resource("calendar//today.json")
 async def today_calendar_json() -> str:
     """Returns today's economic calendar as JSON."""
     import json
-    events = await get_today_events()
+    # Use the new function name and pass "today"
+    events = await get_day_events("today")
     return json.dumps(events, indent=2)
 
 # --- Resource: Latest news (JSON) ---

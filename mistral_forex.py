@@ -36,18 +36,22 @@ mcp_client = None
 async def call_mcp_tool(name, args={}):
     """Call your Forex Factory MCP server using the client API"""
     global mcp_client
-    
+
     if mcp_client is None:
-        # Use StdioServerParameters to start the server
         server_params = StdioServerParameters(
             command="uv",
             args=["run", "forex_factory_mcp.py"]
         )
         mcp_client = Client(server=server_params)
         await mcp_client.__aenter__()
-    
+
     result = await mcp_client.call_tool(name, args)
-    return result
+    
+    # Extract and parse the JSON string from the CallToolResult
+    try:
+        return json.loads(result.content[0].text)
+    except (json.JSONDecodeError, AttributeError):
+        return result.content[0].text if hasattr(result, 'content') else result
 
 
 async def close_mcp_client():
@@ -90,35 +94,38 @@ async def main():
 
             elif user_input.startswith("events "):
                 day = user_input[7:].strip() or "today"
-                events = await call_mcp_tool("get_day_events", {"day": day, "currency": "USD"})
+                events = await call_mcp_tool("get_day_events", {"day": day, "currency": "USD,EUR"})
                 
                 # Print each event with its details
                 if isinstance(events, list):
-                    for event in events:
-                        title = event.get('event', 'N/A')
-                        forecast = event.get('forecast', 'N/A')
-                        actual = event.get('actual', 'N/A')
-                        impact = event.get('impact', 'N/A')
-                        time = event.get('time', 'N/A')
-                        currency = event.get('currency', 'N/A')
-                        
-                        print(f"\n--- {title} ---")
-                        print(f"Currency: {currency} | Time: {time} | Impact: {impact}")
-                        if forecast != 'N/A':
-                            print(f"Forecast: {forecast}")
-                        if actual != 'N/A':
-                            print(f"Actual: {actual}")
-                        
-                        # Get explanation for this specific event
-                        event_content = f"Event: {title}\nCurrency: {currency}\nForecast: {forecast}\nActual: {actual}\nImpact: {impact}"
-                        explanation = ask_mistral(event_content, is_event=True)
-                        print(f"Explanation: {explanation}")
+                    if len(events) == 0:
+                        print("\nNo events found for that day.")
+                    else:
+                        for event in events:
+                            title = event.get('event', 'N/A')
+                            forecast = event.get('forecast', 'N/A')
+                            actual = event.get('actual', 'N/A')
+                            impact = event.get('impact', 'N/A')
+                            time = event.get('time', 'N/A')
+                            currency = event.get('currency', 'N/A')
+                            
+                            print(f"\n--- {title} ---")
+                            print(f"Currency: {currency} | Time: {time} | Impact: {impact}")
+                            if forecast != 'N/A':
+                                print(f"Forecast: {forecast}")
+                            if actual != 'N/A':
+                                print(f"Actual: {actual}")
+                            
+                            # Get explanation for this specific event
+                            event_content = f"Event: {title}\nCurrency: {currency}\nForecast: {forecast}\nActual: {actual}\nImpact: {impact}"
+                            explanation = ask_mistral(event_content, is_event=True)
+                            print(f"Explanation: {explanation}")
                 else:
-                    print("\nNo events found for that day.")
-            
+                    print(f"\nUnexpected response format. Raw server output:\n{events}")
+
             elif user_input == "events":
                 # Default to today
-                events = await call_mcp_tool("get_day_events", {"day": "today", "currency": "USD"})
+                events = await call_mcp_tool("get_day_events", {"day": "today", "currency": "USD,EUR"})
                 
                 # Print each event with its details
                 if isinstance(events, list):
