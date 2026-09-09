@@ -133,6 +133,7 @@ async def main():
                         title = event.get('event', 'N/A')
                         forecast = event.get('forecast', 'N/A')
                         actual = event.get('actual', 'N/A')
+                        previous = event.get('previous', 'N/A')
                         impact = event.get('impact', 'N/A')
                         time = event.get('time', 'N/A')
                         currency = event.get('currency', 'N/A')
@@ -143,9 +144,11 @@ async def main():
                             print(f"Forecast: {forecast}")
                         if actual != 'N/A':
                             print(f"Actual: {actual}")
+                        if previous != 'N/A':
+                            print(f"Previous: {previous}")
                         
                         # Get explanation for this specific event
-                        event_content = f"Event: {title}\nCurrency: {currency}\nForecast: {forecast}\nActual: {actual}\nImpact: {impact}"
+                        event_content = f"Event: {title}\nCurrency: {currency}\nForecast: {forecast}\nActual: {actual}\nPrevious: {previous}\nImpact: {impact}"
                         explanation = ask_mistral(event_content, is_event=True)
                         print(f"Explanation: {explanation}")
                 else:
