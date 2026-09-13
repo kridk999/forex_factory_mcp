@@ -1,7 +1,7 @@
 import json
-
+import re
 from mcp.server import MCPServer
-import httpx
+from curl_cffi.requests import AsyncSession
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
@@ -10,6 +10,10 @@ import os
 # Initialize MCP server
 server = MCPServer("forex-factory-mcp")
 
+def normalize_str(s: str) -> str:
+    """Removes all non-alphanumeric characters and lowercases to guarantee exact matching."""
+    if not s: return ""
+    return re.sub(r'[^a-zA-Z0-9]', '', str(s)).lower()
 
 def get_date_from_string(day_name: str) -> datetime:
     """Convert day name to next upcoming date."""
@@ -17,143 +21,100 @@ def get_date_from_string(day_name: str) -> datetime:
     today = datetime.now()
     
     day_map = {
-        'monday': 0,
-        'tuesday': 1,
-        'wednesday': 2,
-        'thursday': 3,
-        'friday': 4,
-        'saturday': 5,
-        'sunday': 6,
-        'today': today.weekday(),
+        'monday': 0, 'tuesday': 1, 'wednesday': 2, 'thursday': 3,
+        'friday': 4, 'saturday': 5, 'sunday': 6, 'today': today.weekday(),
         'tomorrow': (today.weekday() + 1) % 7
     }
     
     if day_name in day_map:
         target_weekday = day_map[day_name]
     else:
-        return today  # Default to today
-    
-    # Find next occurrence of the target weekday
+        return today
+        
     days_ahead = (target_weekday - today.weekday()) % 7
     if days_ahead == 0 and day_name != 'today':
-        days_ahead = 7  # Next week
-    
+        days_ahead = 7
+        
     return today + timedelta(days=days_ahead)
-
 
 def format_date_for_url(target_date: datetime) -> str:
     """Format date for Forex Factory calendar URL."""
-    # Constructs format like 'sep7.2026'
     month = target_date.strftime("%b").lower()
     return f"{month}{target_date.day}.{target_date.year}"
 
-
-async def scrape_actual_values(target_date: datetime) -> Dict[str, Dict]:
+async def scrape_actual_values(target_date: datetime) -> Dict[str, List[Dict]]:
     """Scrape all values (Actual, Forecast, Previous) from Forex Factory calendar page.
-    Returns a dict mapping (currency|time|event) key to a dict with actual, forecast, previous."""
+    Returns a dict mapping (currency|event) key to a list of dicts with actual, forecast, previous."""
     date_str = format_date_for_url(target_date)
-    url = f"https://www.forexfactory.com/calendar.php?day={date_str}"
+    url = f"https://www.forexfactory.com/calendar?day={date_str}"
     
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Upgrade-Insecure-Requests": "1"
     }
     
     scraped_data = {}
     
     try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
-            response = await client.get(url, headers=headers)
+        # Using curl_cffi with Chrome impersonation to bypass TLS fingerprinting
+        async with AsyncSession(impersonate="chrome") as client:
+            response = await client.get(url, headers=headers, timeout=30)
             response.raise_for_status()
             soup = BeautifulSoup(response.text, "html.parser")
             
-            # Try multiple row selectors - Forex Factory may change class names
-            row_selectors = [
-                ".calendar__row.calendar__row--grey, .calendar__row.calendar__row--white",
-                ".calendar__row",
-                "tr.calendarRow",
-                "tr[class*='calendar']"
-            ]
-            
-            rows = []
-            for selector in row_selectors:
-                rows = soup.select(selector)
-                if rows:
-                    break
-            
+            # Robust row matching
+            rows = soup.select("tr.calendar__row")
             if not rows:
-                # Try finding any table rows
+                rows = soup.select("tr[data-eventid]")
+            if not rows:
                 table = soup.find("table")
                 if table:
-                    rows = table.find_all("tr")[1:]  # Skip header
+                    rows = table.find_all("tr")[1:]
             
             for row in rows:
-                # Try multiple selectors for each field
-                time_text = ""
-                currency_text = ""
-                event_text = ""
-                actual_text = "N/A"
-                forecast_text = "N/A"
-                previous_text = "N/A"
+                currency_elem = row.select_one("td.calendar__currency, td.currency")
+                if not currency_elem: continue
+                currency_text = currency_elem.get_text(strip=True)
+                if not currency_text: continue
+                    
+                event_elem = row.select_one("td.calendar__event, td.event")
+                event_text = event_elem.get_text(strip=True) if event_elem else ""
                 
-                # Extract time
-                for sel in [".calendar__time", "td.time", "td:has(span.time)"]:
-                    elem = row.select_one(sel)
-                    if elem:
-                        time_text = elem.get_text(strip=True)
-                        break
+                actual_elem = row.select_one("td.calendar__actual, td.actual")
+                actual_text = actual_elem.get_text(strip=True) if actual_elem else ""
+                if not actual_text: actual_text = "N/A"
                 
-                # Extract currency
-                for sel in [".calendar__currency", "td.currency", "td:has(span.currency)"]:
-                    elem = row.select_one(sel)
-                    if elem:
-                        currency_text = elem.get_text(strip=True)
-                        break
+                forecast_elem = row.select_one("td.calendar__forecast, td.forecast")
+                forecast_text = forecast_elem.get_text(strip=True) if forecast_elem else ""
+                if not forecast_text: forecast_text = "N/A"
                 
-                # Extract event title
-                for sel in [".calendar__event", "td.event", "td:has(a.event)"]:
-                    elem = row.select_one(sel)
-                    if elem:
-                        event_text = elem.get_text(strip=True)
-                        break
-                
-                # Extract actual value
-                for sel in [".calendar__actual", "td.actual", "td:has(span.actual)"]:
-                    elem = row.select_one(sel)
-                    if elem:
-                        actual_text = elem.get_text(strip=True) or "N/A"
-                        break
-                
-                # Extract forecast value
-                for sel in [".calendar__forecast", "td.forecast", "td:has(span.forecast)"]:
-                    elem = row.select_one(sel)
-                    if elem:
-                        forecast_text = elem.get_text(strip=True) or "N/A"
-                        break
-                
-                # Extract previous value
-                for sel in [".calendar__previous", "td.previous", "td:has(span.previous)"]:
-                    elem = row.select_one(sel)
-                    if elem:
-                        previous_text = elem.get_text(strip=True) or "N/A"
-                        break
+                previous_elem = row.select_one("td.calendar__previous, td.previous")
+                previous_text = previous_elem.get_text(strip=True) if previous_elem else ""
+                if not previous_text: previous_text = "N/A"
                 
                 if event_text:
-                    # Create a unique key for matching with JSON data
-                    key = f"{currency_text}|{time_text}|{event_text}"
-                    scraped_data[key] = {
+                    key = f"{normalize_str(currency_text)}|{normalize_str(event_text)}"
+                    if key not in scraped_data:
+                        scraped_data[key] = []
+                    
+                    scraped_data[key].append({
                         "actual": actual_text,
                         "forecast": forecast_text,
                         "previous": previous_text
-                    }
+                    })
                     
-    except Exception as e:
-        # If scraping fails, return empty dict (we'll fall back to JSON data)
+    except Exception:
         pass
-    
+        
     return scraped_data
 
-
-# In-memory calendar cache
 CALENDAR_CACHE = {"data": None, "timestamp": None}
 CACHE_DURATION_HOURS = 1
 
@@ -167,34 +128,26 @@ async def fetch_calendar_events(target_date: datetime) -> List[Dict]:
         and CALENDAR_CACHE["timestamp"] is not None
         and (now - CALENDAR_CACHE["timestamp"]) < timedelta(hours=CACHE_DURATION_HOURS)
     )
-
     data = None
     if use_cache:
         data = CALENDAR_CACHE["data"]
     else:
-        # Endpoints to try (primary and CDN mirror)
         endpoints = [
             "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
             "https://cdn-nfs.faireconomy.media/ff_calendar_thisweek.json"
         ]
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        }
-
         for url in endpoints:
             try:
-                async with httpx.AsyncClient(follow_redirects=True) as client:
-                    response = await client.get(url, headers=headers, timeout=10.0)
+                async with AsyncSession(impersonate="chrome") as client:
+                    response = await client.get(url, timeout=10)
                     response.raise_for_status()
                     data = response.json()
-                    # Store in cache
                     CALENDAR_CACHE["data"] = data
                     CALENDAR_CACHE["timestamp"] = now
                     break
             except Exception:
                 continue
 
-    # If both endpoints fail and cache is empty, return an informative error
     if data is None:
         return [{
             "time": "N/A",
@@ -209,8 +162,6 @@ async def fetch_calendar_events(target_date: datetime) -> List[Dict]:
 
     events = []
     target_date_str = target_date.strftime("%Y-%m-%d")
-    
-    # Scrape all values from the website to get Actual values
     scraped_data = await scrape_actual_values(target_date)
 
     for item in data:
@@ -224,22 +175,29 @@ async def fetch_calendar_events(target_date: datetime) -> List[Dict]:
             if time_part != "00:00":
                 time_str = time_part
 
-        # Build event title with forecast/actual/previous - always include all three
         base_title = item.get("title", "N/A")
         json_forecast = item.get("forecast", "") or "N/A"
         json_previous = item.get("previous", "") or "N/A"
         json_actual = item.get("actual", "") or "N/A"
         
-        # Try to get values from scraped data first, then fall back to JSON
         currency = item.get("country", "N/A")
-        scraped_key = f"{currency}|{time_str}|{base_title}"
-        scraped = scraped_data.get(scraped_key, {})
         
-        actual_val = scraped.get("actual", json_actual)
-        forecast_val = scraped.get("forecast", json_forecast)
-        previous_val = scraped.get("previous", json_previous)
+        # Look up using normalized robust currency|event key
+        scraped_key = f"{normalize_str(currency)}|{normalize_str(base_title)}"
+        scraped_list = scraped_data.get(scraped_key, [])
         
-        # Always include all three in the title
+        scraped = {}
+        if len(scraped_list) > 0:
+            scraped = scraped_list.pop(0)
+            
+        actual_val = scraped.get("actual") if scraped.get("actual") not in [None, "", "N/A"] else json_actual
+        forecast_val = scraped.get("forecast") if scraped.get("forecast") not in [None, "", "N/A"] else json_forecast
+        previous_val = scraped.get("previous") if scraped.get("previous") not in [None, "", "N/A"] else json_previous
+        
+        if not actual_val: actual_val = "N/A"
+        if not forecast_val: forecast_val = "N/A"
+        if not previous_val: previous_val = "N/A"
+        
         full_title = f"{base_title} (Forecast: {forecast_val}, Actual: {actual_val}, Previous: {previous_val})"
         
         events.append({
@@ -252,41 +210,24 @@ async def fetch_calendar_events(target_date: datetime) -> List[Dict]:
             "previous": previous_val,
             "source_url": "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
         })
-
     return events
 
-
-# --- Tool: Get economic calendar events for a specific day ---
 @server.tool()
 async def get_day_events(day: str = "today", currency: Optional[str] = None, impact: Optional[str] = None) -> str:
-    """
-    Fetch economic calendar events for a specific day from Forex Factory.
-    
-    Args:
-        day: Day name ('today', 'tomorrow', 'monday', 'tuesday', etc.) or date in YYYY-MM-DD format.
-        currency: Filter by currency (e.g., 'USD', 'EUR', 'GBP'). If None, returns all.
-        impact: Filter by impact level ('high', 'medium', 'low'). If None, returns all.
-        
-    Returns:
-        List of event dictionaries with keys: time, currency, impact, event, actual, forecast, previous.
-    """
-    # Parse the day parameter
+    """Fetch economic calendar events for a specific day from Forex Factory."""
     if day.lower() == "today":
         target_date = datetime.now()
     elif day.lower() == "tomorrow":
         target_date = datetime.now() + timedelta(days=1)
     else:
-        # Try to parse as a day name
         try:
             target_date = get_date_from_string(day)
         except:
-            # Try to parse as a date string (YYYY-MM-DD)
             try:
                 target_date = datetime.strptime(day, "%Y-%m-%d")
             except:
                 target_date = datetime.now()
-    
-    # Call the JSON fetcher using the datetime object
+                
     events = await fetch_calendar_events(target_date)
     
     filtered_events = []
@@ -296,33 +237,19 @@ async def get_day_events(day: str = "today", currency: Optional[str] = None, imp
         if impact and impact.lower() not in event.get("impact", "").lower():
             continue
         filtered_events.append(event)
-    
-    # Explicitly serialize the list to a valid JSON string
+        
     return json.dumps(filtered_events)
 
-# --- Tool: Search Forex Factory news ---
 @server.tool()
 async def search_forex_factory_news(query: str, limit: int = 5) -> List[Dict]:
-    """
-    Search Forex Factory news for a given query.
-    
-    Args:
-        query: Search term (e.g., 'FOMC', 'CPI', 'ECB').
-        limit: Maximum number of results to return.
-    
-    Returns:
-        List of news item dictionaries with keys: title, url, summary, date.
-    """
+    """Search Forex Factory news for a given query."""
     url = f"https://www.forexfactory.com/news?search={query}"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    }
     
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url, headers=headers)
+    async with AsyncSession(impersonate="chrome") as client:
+        response = await client.get(url)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, "html.parser")
-    
+        
     news_items = []
     articles = soup.select(".news-article")[:limit]
     
@@ -340,49 +267,28 @@ async def search_forex_factory_news(query: str, limit: int = 5) -> List[Dict]:
             "summary": summary,
             "date": date
         })
-    
+        
     return json.dumps(news_items)
 
-# --- Tool: Get specific news article by ID/slug ---
 @server.tool()
 async def get_news_article(news_id: str) -> Dict:
-    """
-    Fetch a specific Forex Factory news article by its ID or URL slug.
-    
-    Args:
-        news_id: The news ID or URL slug (e.g., '1416551-gold-prices-coin-flip-lasted-a-day')
-                 Can also be just the ID number (e.g., '1416551')
-    
-    Returns:
-        Dictionary with title, url, full content, date, and source.
-    """
-    # Handle both full slug and just ID
+    """Fetch a specific Forex Factory news article by its ID or URL slug."""
     if '-' in news_id:
         url = f"https://www.forexfactory.com/news/{news_id}"
     else:
         url = f"https://www.forexfactory.com/news/{news_id}"
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    }
-    
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url, headers=headers)
+        
+    async with AsyncSession(impersonate="chrome") as client:
+        response = await client.get(url)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, "html.parser")
-    
-    # Forex Factory article structure
+        
     title = soup.select_one("h1") or soup.select_one(".news-title")
     title = title.get_text(strip=True) if title else "No title found"
     
-    # Try multiple selectors for content
     content_selectors = [
-        ".news-content",
-        ".article-body",
-        ".post-content",
-        "article",
-        ".content",
-        "div[itemprop='articleBody']",
+        ".news-content", ".article-body", ".post-content",
+        "article", ".content", "div[itemprop='articleBody']",
         ".news-article__content",
     ]
     
@@ -392,12 +298,11 @@ async def get_news_article(news_id: str) -> Dict:
         if elem:
             content = elem.get_text(strip=True, separator="\n")
             break
-    
+            
     if not content:
-        # Fallback: get all paragraphs
         paragraphs = soup.find_all('p')
         content = "\n".join(p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True))
-    
+        
     date_elem = soup.select_one("time") or soup.select_one(".date") or soup.select_one(".news-article__date")
     date = date_elem.get_text(strip=True) if date_elem else "No date"
     
@@ -409,27 +314,21 @@ async def get_news_article(news_id: str) -> Dict:
         "source": "Forex Factory"
     })
 
-# --- Resource: Latest economic calendar (JSON) ---
-@server.resource("calendar//today.json")
+@server.resource("calendar://today.json")
 async def today_calendar_json() -> str:
     """Returns today's economic calendar as JSON."""
-    import json
-    # Use the new function name and pass "today"
     events = await get_day_events("today")
-    return json.dumps(events, indent=2)
+    return json.dumps(json.loads(events), indent=2)
 
-# --- Resource: Latest news (JSON) ---
-@server.resource("news//latest.json")
+@server.resource("news://latest.json")
 async def latest_news_json() -> str:
     """Returns the latest Forex Factory news as JSON."""
-    import json
     news = await search_forex_factory_news("forex", limit=10)
-    return json.dumps(news, indent=2)
+    return json.dumps(json.loads(news), indent=2)
 
-# Run the server
 if __name__ == "__main__":
     print("Forex Factory MCP server starting...")
     print("Available tools: get_day_events, search_forex_factory_news, get_news_article")
-    print("Available resources: calendar//today.json, news//latest.json")
+    print("Available resources: calendar://today.json, news://latest.json")
     print("Waiting for MCP client connections...")
     server.run()
